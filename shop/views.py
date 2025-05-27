@@ -1,66 +1,102 @@
-from rest_framework import generics, viewsets, permissions
+from rest_framework import generics, viewsets, status
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from .models import Category, Product, Cart
-from .serializers import *
+from .serializers import (
+    RegisterSerializer,
+    CategorySerializer,
+    ProductSerializer,
+    CartSerializer,
+)
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.shortcuts import render
-# Auth Views
-def product(request):
-    return render(request,"product.html")
-def signup(request):
-    return render(request,"signup.html")
-def login(request):
-    return render(request,"login.html")
-def category(request):
-    return render(request,"category.html")
-def home(request):
-    return render(request,"home.html")
-def shop(request):
-    return render(request,"shop.html")
-def singlepro(request):
-    return render(request,"single-product.html")
-def cart(request):
-    return render(request,"cart.html")
-class RegisterView(generics.CreateAPIView):
-    queryset = User.objects.all()
-    serializer_class = RegisterSerializer
-    permission_classes = [permissions.AllowAny]
 
-class LogoutView(generics.GenericAPIView):
+# --- Authentication Views ---
+
+class RegisterView(generics.CreateAPIView):
+    serializer_class = RegisterSerializer
+    permission_classes = []
+
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def post(self, request):
         try:
-            token = RefreshToken(request.data["refresh"])
+            refresh_token = request.data["refresh"]
+            token = RefreshToken(refresh_token)
             token.blacklist()
-            return Response({"message": "Logged out successfully."})
+            return Response({"detail": "Logged out successfully."}, status=status.HTTP_205_RESET_CONTENT)
+        except Exception as e:
+            return Response({"error": "Invalid token or token already blacklisted."}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# --- Category Views ---
+
+class CategoryViewSet(viewsets.ModelViewSet):
+    queryset = Category.objects.all()
+    serializer_class = CategorySerializer
+
+    def get_permissions(self):
+        if self.request.method in ['POST']:
+            return [IsAdminUser()]
+        return []
+
+
+# --- Product Views ---
+
+class ProductViewSet(viewsets.ModelViewSet):
+    queryset = Product.objects.all()
+    serializer_class = ProductSerializer
+
+    def get_permissions(self):
+        if self.request.method in ['POST', 'PATCH', 'DELETE']:
+            return [IsAdminUser()]
+        return []
+
+    def list(self, request):
+        queryset = self.get_queryset()
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response({"products": serializer.data})
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({"products": serializer.data})
+
+    def retrieve(self, request, pk=None):
+        try:
+            product = self.get_object()
+            serializer = self.get_serializer(product)
+            return Response({"product": serializer.data})
         except:
-            return Response({"error": "Invalid refresh token"}, status=400)
+            return Response({"error": "Product not found"}, status=404)
 
-# # Category
-# class CategoryViewSet(viewsets.ModelViewSet):
-#     queryset = Category.objects.all()
-#     serializer_class = CategorySerializer
 
-#     def get_permissions(self):
-#         if self.request.method in ['POST']:
-#             return [permissions.IsAdminUser()]
-#         return [permissions.AllowAny()]
+# --- Cart Views ---
 
-# # Product
-# class ProductViewSet(viewsets.ModelViewSet):
-#     queryset = Product.objects.all()
-#     serializer_class = ProductSerializer
+class CartViewSet(viewsets.ModelViewSet):
+    serializer_class = CartSerializer
+    permission_classes = [IsAuthenticated]
 
-#     def get_permissions(self):
-#         if self.request.method in ['POST', 'PATCH', 'DELETE']:
-#             return [permissions.IsAdminUser()]
-#         return [permissions.AllowAny()]
+    def get_queryset(self):
+        return Cart.objects.filter(user=self.request.user)
 
-# # Cart
-# class CartViewSet(viewsets.ModelViewSet):
-#     serializer_class = CartSerializer
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
 
-#     def get_queryset(self):
-#         return Cart.objects.filter(user=self.request.user)
+    def list(self, request):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({"cart": serializer.data})
 
-#     def perform_create(self, serializer):
-#         serializer.save(user=self.request.user)
+    def partial_update(self, request, pk=None):
+        cart_item = self.get_object()
+        serializer = self.get_serializer(cart_item, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response({"cart_item": serializer.data})
+
+    def destroy(self, request, pk=None):
+        cart_item = self.get_object()
+        cart_item.delete()
+        return Response({"detail": "Cart item deleted successfully."})
