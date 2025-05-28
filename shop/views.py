@@ -3,6 +3,8 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from .models import Category, Product, Cart
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters
 from .serializers import (
     RegisterSerializer,
     CategorySerializer,
@@ -48,14 +50,16 @@ class CategoryViewSet(viewsets.ModelViewSet):
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    filterset_fields = ['category']  # 🔍 Filter by category
+    search_fields = ['name']         # 🔍 Search by product name
     def get_permissions(self):
         if self.request.method in ['POST', 'PATCH', 'DELETE']:
             return [IsAdminUser()]
         return []
 
     def list(self, request):
-        queryset = self.get_queryset()
+        queryset = self.filter_queryset(self.get_queryset())
         page = self.paginate_queryset(queryset)
         if page is not None:
             serializer = self.get_serializer(page, many=True)
